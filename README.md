@@ -10,7 +10,7 @@ This repository contains the following files:
 * appendix_paper_IHCMR.Rmd: the markdown file that generates the dox and pdf output files
 * appendix_paper_IHCMR.docx: the word output file
 * appendix_paper_IHCMR.pdf: the pdf output file
-* appendix_paper_IHCMR[rmd2r].R: the R script generated from the markdown file using the function `rmd2rscript` <http://rstudio-pubs-static.s3.amazonaws.com/12734_0a38887f19a34d92b7311a2c9cb15022.html>.
+* appendix_paper_IHCMR[rmd2r].R: the R script generated from the markdown file using the function `rmd2rscript` which can be found [here](http://rstudio-pubs-static.s3.amazonaws.com/12734_0a38887f19a34d92b7311a2c9cb15022.html).
 
 
 
