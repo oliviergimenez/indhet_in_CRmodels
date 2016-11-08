@@ -1,0 +1,723 @@
+#' ---	
+#' title: "Appendix"	
+#' output:	
+#'   word_document: default	
+#'   html_notebook: default	
+#'   pdf_document: default	
+#'   html_document: default	
+#' ---	
+#' 	
+#' ## Introduction	
+#' 	
+#' In this appendix, we introduce three methods to cope with individual heterogeneity in capture-recapture models. First, we present multistate models in which heterogeneity is measured on individuals using states. Then, we illustrate models with individual random effects and finite mixtures that can help in dealing with hidden heterogeneity. We refer to the paper for a formal presentation of these models and a list of references using them. Throughout this appendix, we use R to simulate data and program Mark is called from R using package RMark to fit models. We do our best to ensure reproducibility. Note that program E-SURGE could be used instead, or the Bayesian approach using Jags.	
+#' 	
+#' ## Multistate models	
+#' 	
+#' In this section, we aim at illustrating how not accounting for individual heterogeneity may obscure the detection of life-history tradeoffs. 	
+#' In details, we consider two states for the individuals of our fake population, non-breeding (NB) and breeding (B). To mimic 	
+#' individual heterogeneity, we simulate a bunch of good individuals with survival $\phi_{NB}=0.7$ and $\phi_{B}=0.8$ and a bunch of bad individuals with survival $\phi_{NB}=0.7$ and $\phi_{B}=0.6$. Overall, the cost of breeding on survival should be detected only in bad individuals after accounting for individual heterogeneity through quality. For each group of bad vs. good individuals, we consider the same detection probability $p=0.9$, the same transition probabilities between breeding states $\psi_{NB,B}=0.8$ and $\psi_{B,NB}=0.3$, and 100 newly marked individuals for each group in each year of the 6-year study.	
+#' 	
+#' ### Data simulation	
+#' 	
+#' Using R code from [Kéry and Schaub (2012)](http://www.vogelwarte.ch/de/projekte/publikationen/bpa/) book (chapter 9), we first define a function to simulate multistate capture-recapture data:	
+#' 	
+# Define function to simulate multistate capture-recapture data	
+simul.ms <- function(PSI.STATE, PSI.OBS, marked, unobservable = NA){	
+  # Unobservable: number of state that is unobservable	
+  n.occasions <- dim(PSI.STATE)[4] + 1	
+  CH <- CH.TRUE <- matrix(NA, ncol = n.occasions, nrow = sum(marked))	
+  # Define a vector with the occasion of marking	
+  mark.occ <- matrix(0, ncol = dim(PSI.STATE)[1], nrow = sum(marked))	
+  g <- colSums(marked)	
+  for (s in 1:dim(PSI.STATE)[1]){	
+    if (g[s]==0) next # To avoid error message if nothing to replace	
+    mark.occ[(cumsum(g[1:s])-g[s]+1)[s]:cumsum(g[1:s])[s],s] <-	
+    rep(1:n.occasions, marked[1:n.occasions,s])	
+  } #s	
+  for (i in 1:sum(marked)){	
+    for (s in 1:dim(PSI.STATE)[1]){	
+      if (mark.occ[i,s]==0) next	
+      first <- mark.occ[i,s]	
+      CH[i,first] <- s	
+      CH.TRUE[i,first] <- s	
+    } #s	
+    for (t in (first+1):n.occasions){	
+      # Multinomial trials for state transitions	
+      if (first==n.occasions) next	
+      state <- which(rmultinom(1, 1, PSI.STATE[CH.TRUE[i,t-1],,i,t-1])==1)	
+      CH.TRUE[i,t] <- state	
+      # Multinomial trials for observation process	
+      event <- which(rmultinom(1, 1, PSI.OBS[CH.TRUE[i,t],,i,t-1])==1)	
+      CH[i,t] <- event	
+    } #t	
+  } #i	
+  # Replace the NA and the highest state number (dead) in the file by 0	
+  CH[is.na(CH)] <- 0	
+  CH[CH==dim(PSI.STATE)[1]] <- 0	
+  CH[CH==unobservable] <- 0	
+  id <- numeric(0)	
+  for (i in 1:dim(CH)[1]){	
+    z <- min(which(CH[i,]!=0))	
+    ifelse(z==dim(CH)[2], id <- c(id,i), id <- c(id))	
+  }	
+  return(list(CH=CH[-id,], CH.TRUE=CH.TRUE[-id,]))	
+# CH: capture histories to be used	
+# CH.TRUE: capture histories with perfect observation	
+}	
+#' 	
+#' 	
+#' Second, we use this function to simulate the two datasets of good and bad individuals:	
+#' 	
+set.seed(1) # for reproducibility	
+p = 0.9	
+R = 100	
+#------------------------------	
+#---- good quality individuals	
+#------------------------------	
+# Define mean survival, transitions, recapture, as well as number of occasions, states, observations and released individuals	
+phiA <- 0.7	
+phiB <- 0.8	
+psiAB <- 0.8	
+psiBA <- 0.3	
+pA <- p	
+pB <- p	
+n.occasions <- 6	
+n.states <- 3	
+n.obs <- 3	
+marked <- matrix(NA, ncol = n.states, nrow = n.occasions)	
+marked[,1] <- rep(R, n.occasions)	
+marked[,2] <- rep(R, n.occasions)	
+marked[,3] <- rep(0, n.occasions)	
+# Define matrices with survival, transition and recapture probabilities	
+# 1. State process matrix	
+totrel <- sum(marked)*(n.occasions-1)	
+PSI.STATE <- array(NA, dim=c(n.states, n.states, totrel, n.occasions-1))	
+for (i in 1:totrel){	
+  for (t in 1:(n.occasions-1)){	
+    PSI.STATE[,,i,t] <- matrix(c(	
+      phiA*(1-psiAB), phiA*psiAB, 1-phiA,	
+      phiB*psiBA, phiB*(1-psiBA), 1-phiB,	
+      0, 0, 1 ), nrow = n.states, byrow = TRUE)	
+  } #t	
+} #i	
+# 2.Observation process matrix	
+PSI.OBS <- array(NA, dim=c(n.states, n.obs, totrel, n.occasions-1))	
+for (i in 1:totrel){	
+  for (t in 1:(n.occasions-1)){	
+    PSI.OBS[,,i,t] <- matrix(c(	
+      pA, 0, 1-pA,	
+      0, pB, 1-pB,	
+      0, 0, 1 ), nrow = n.states, byrow = TRUE)	
+  } #t	
+} #i	
+	
+# Execute function	
+sim <- simul.ms(PSI.STATE, PSI.OBS, marked)	
+CH <- sim$CH	
+his1 = CH[!apply(CH,1,sum)==0,] # remove lines of 0s	
+	
+#------------------------------	
+#---- bad quality individuals	
+#------------------------------	
+# Define mean survival, transitions, recapture, as well as number of occasions, states, observations and released individuals	
+phiA <- 0.7	
+phiB <- 0.6	
+psiAB <- 0.8	
+psiBA <- 0.3	
+pA <- p	
+pB <- p	
+n.occasions <- 6	
+n.states <- 3	
+n.obs <- 3	
+marked <- matrix(NA, ncol = n.states, nrow = n.occasions)	
+marked[,1] <- rep(R, n.occasions)	
+marked[,2] <- rep(R, n.occasions)	
+marked[,3] <- rep(0, n.occasions)	
+# Define matrices with survival, transition and recapture probabilities	
+# 1. State process matrix	
+totrel <- sum(marked)*(n.occasions-1)	
+PSI.STATE <- array(NA, dim=c(n.states, n.states, totrel, n.occasions-1))	
+for (i in 1:totrel){	
+  for (t in 1:(n.occasions-1)){	
+    PSI.STATE[,,i,t] <- matrix(c(	
+    phiA*(1-psiAB), phiA*psiAB, 1-phiA,	
+    phiB*psiBA, phiB*(1-psiBA), 1-phiB,	
+    0, 0, 1 ), nrow = n.states, byrow = TRUE)	
+  } #t	
+} #i	
+# 2.Observation process matrix	
+PSI.OBS <- array(NA, dim=c(n.states, n.obs, totrel, n.occasions-1))	
+for (i in 1:totrel){	
+  for (t in 1:(n.occasions-1)){	
+    PSI.OBS[,,i,t] <- matrix(c(	
+    pA, 0, 1-pA,	
+    0, pB, 1-pB,	
+    0, 0, 1 ), nrow = n.states, byrow = TRUE)	
+  } #t	
+} #i	
+	
+# Execute function	
+sim <- simul.ms(PSI.STATE, PSI.OBS, marked)	
+CH <- sim$CH	
+his2 = CH[!apply(CH,1,sum)==0,] # remove lines of 0s	
+#' 	
+#' 	
+#' Last, we pool these two datasets together:	
+#' 	
+his = rbind(his1,his2) 	
+head(his) # display first lines	
+tail(his) # display last lines	
+#' 	
+#' 	
+#' ### Model fitting	
+#' 	
+#' First, we format the data we've just simulated so that these can be used with RMark (check out [these notes](https://sites.google.com/site/workshoponcmr/) by Mike Conroy for more details):	
+#' 	
+k = ncol(his) # nb of capture occasions	
+n = nrow(his) # nb of individuals	
+out = array(dim=n)	
+for (i in 1:n){	
+	y = (his[i,] > 0) * his[i,]	
+	out[i] = paste(y,collapse="")	
+}	
+capt.hist = data.frame(ch = out)	
+#' 	
+#' 	
+#' Then we fit a multistate model: we assume that survival depends on the breeding states, 	
+#' transition probabilities are constant over time, as well as the detection probability:	
+#' 	
+# load RMark package	
+library(RMark)	
+	
+# Process data	
+mstrata.processed=process.data(capt.hist,model="Multistrata")	
+	
+# Create default design data	
+mstrata.ddl=make.design.data(mstrata.processed)	
+	
+# Define survival probability	
+S.stratum=list(formula=~stratum) # survival depends on states	
+	
+#  Define detection probability	
+p.dot=list(formula=~1) # constant over time, does not depend on states	
+	
+# Define transition probs	
+Psi.s=list(formula=~-1+stratum:tostratum)	
+	
+# Run model with state effect on survival	
+mstrata.mod = mark(mstrata.processed,mstrata.ddl,model.parameters=list(S=S.stratum,p=p.dot,Psi=Psi.s),output = FALSE,delete=T)	
+mstrata.mod$results$real[c(1:4,19),1:4]	
+#' 	
+#' 	
+#' Run same model without state effect on survival:	
+#' 	
+S.dot=list(formula=~1) # survival does not depend on states	
+m.mod = mark(mstrata.processed,mstrata.ddl,model.parameters=list(S=S.dot,p=p.dot,Psi=Psi.s),output = FALSE,delete=T)	
+m.mod$results$real[c(1:3,18),1:4]	
+#' 	
+#' 	
+#' Compare AICc:	
+#' 	
+m.mod$results$AICc	
+mstrata.mod$results$AICc	
+#' 	
+#' 	
+#' Sounds like the difference in survival of breeding vs. non-breeding individuals is hard to detect.	
+#' 	
+#' Let's add individual heterogeneity through an individual covariate for bad vs. good individuals:	
+#' 	
+capt.hist$quality=c(rep('good',nrow(his1)),rep('bad',nrow(his2)))	
+head(capt.hist)	
+tail(capt.hist)	
+#' 	
+#' 	
+#' Now we fit again the two models from above, including the effect of individual heterogeneity.	
+#' 	
+#' 	
+# Process data	
+mstrata.processed=process.data(capt.hist,model="Multistrata",groups = 'quality')	
+# Create default design data	
+mstrata.ddl=make.design.data(mstrata.processed)	
+	
+#  define survival function of both states and quality	
+S.covstrata=list(formula=~quality*stratum)	
+S.cov=list(formula=~quality)	
+	
+# Run model with state effect on survival	
+mcovstrata.mod = mark(mstrata.processed,mstrata.ddl,model.parameters=list(S=S.covstrata,p=p.dot,Psi=Psi.s),output = FALSE,delete=T)	
+mcovstrata.mod$results$real[c(1:6,21),1:4]	
+#' 	
+#' 	
+#' Same model without state effect on survival:	
+#' 	
+mcov.mod = mark(mstrata.processed,mstrata.ddl,model.parameters=list(S=S.cov,p=p.dot,Psi=Psi.s),output = FALSE,delete=T)	
+mcov.mod$results$real[c(1:4,19),1:4]	
+#' 	
+#' 	
+#' Compare AICc:	
+#' 	
+mcovstrata.mod$results$AICc # quality and state on survival	
+mstrata.mod$results$AICc # state on survival	
+mcov.mod$results$AICc # quality on survival	
+m.mod$results$AICc # constant survival	
+#' 	
+#' Clearly, the inclusion of quality improves the AICc. Also, the model with a difference in survival between breeders and non-breeders is better supported by the data when individual heterogeneity is accounted for.	
+#' 	
+#' # Models with individual random effects	
+#' 	
+#' Here, we aim at illustrating how not accounting for individual heterogeneity may obscure the detection of senescence in survival. 	
+#' More specifically, we consider a single cohort of 500 individuals with survival decreasing as they age over a 20-year study. 	
+#' We also add a frailty for each individual under the form of a normal distribution. Specifically, we specify $logit(\phi_i(a))=\beta_0+\beta_1 a + \varepsilon_i$ where $\varepsilon_i \sim N(0,\sigma^2)$. We use $\beta_0 = 1$, $\beta_1 = -0.05$ and $\sigma = 1$. If we condition upon the random effect, survival is decreasing as age increases. Note that we consider the same detection probability $p=0.5$ for all individuals.	
+#' 	
+#' ### Data simulation	
+#' 	
+#' First, we simulate survival for each individual then plot the individual trajectories (in grey) as well as survival conditional on the random effect (in red):	
+#' 	
+r = set.seed(3) # for reproducibility	
+p = 0.5 # detection	
+intercept_phi = 1 	
+slope_phi = -0.05	
+sigmaphi = 1	
+nind = 500 # nb of individuals	
+nyear = 20 # duration of the study	
+expit<-function(x){exp(x)/(1+exp(x))} # reciprocal logit function	
+z<-data<-x<-matrix(NA,nrow=nind,ncol=nyear)	
+first<-rep(1,nind)	
+age = matrix(NA,nind,nyear)	
+phi = matrix(NA,nind,nyear)	
+# simulate age-varying survival for each individual	
+for (i in 1:nind){	
+  mask <- first[i]:nyear	
+  age[i,mask] <- mask - first[i] + 1	
+  phi[i,mask] <- expit(intercept_phi + slope_phi * age[i,mask] + rnorm(1,0,sigmaphi))	
+}	
+plot(age[1,],phi[1,],type='l',col='grey',ylim=c(0,1),xlab='age',ylab='estimated survival')	
+for (i in 2:nind){	
+  lines(age[i,],phi[i,],type='l',col='grey')	
+}	
+lines(1:nyear,expit(intercept_phi + slope_phi * 1:nyear),col='red',lwd=2)	
+#' 	
+#' 	
+#' Now simulate the encounter histories:	
+#' 	
+for(i in 1:nind){	
+  z[i,first[i]] <- x[i,first[i]] <- 1	
+  for(j in (first[i]+1):nyear){	
+    z[i,j]<-rbinom(1,1,phi[i,j-1]*z[i,j-1])	
+    x[i,j]<-rbinom(1,1,z[i,j]*p)	
+  }	
+}	
+his = x	
+his[is.na(his)]=0 # remove lines with 0's	
+#' 	
+#' 	
+#' ### Model fitting	
+#' 	
+#' First, we format the data we've just simulated so that these can be used with RMark:  	
+#' 	
+k = ncol(his) # nb of capture occasions	
+n = nrow(his) # nb of individuals	
+out = array(dim=n)	
+for (i in 1:n){	
+	y = (his[i,] > 0) * 1	
+	out[i] = paste(y,collapse="")	
+}	
+capt.hist = data.frame(ch = out)	
+#' 	
+#' 	
+#' Now, we add age as a time-varying individual covariate to the dataset (heck out [these notes](https://sites.google.com/site/workshoponcmr/) by Mike Conroy for more details):	
+#' 	
+df = data.frame(time=c(1:(k-1)),cov=runif(k-1)) 	
+simul.data = list(cap.data=capt.hist,cov=df)	
+n.ind <- nrow(simul.data$cap.data)	
+for (j in 1:k){	
+  name = paste('cov',j,sep='')	
+  assign(name,age[,j])	
+}	
+cap<-simul.data$cap.data	
+# pretty ugly lines of codes to follow, happy to hear for suggestions to make this dynamic	
+cap$cov1=cov1	
+cap$cov2=cov2	
+cap$cov3=cov3	
+cap$cov4=cov4	
+cap$cov5=cov5	
+cap$cov6=cov6	
+cap$cov7=cov7	
+cap$cov8=cov8	
+cap$cov9=cov9	
+cap$cov10=cov10	
+cap$cov11=cov11	
+cap$cov12=cov12	
+cap$cov13=cov13	
+cap$cov14=cov14	
+cap$cov15=cov15	
+cap$cov16=cov16	
+cap$cov17=cov17	
+cap$cov18=cov18	
+cap$cov19=cov19	
+#head(cap)	
+#' 	
+#' 	
+#' Now we fit the model with an age effect but no individual heterogeneity to the simulated dataset:	
+#' 	
+library(RMark)	
+cap.processed=process.data(cap,model="CJS")	
+cap.ddl=make.design.data(cap.processed)	
+Phi.cov<-list(formula=~cov)	
+p.dot=list(formula=~1)	
+cov.est<-mark(cap.processed,cap.ddl,model.parameters=list(Phi=Phi.cov,p=p.dot),output = FALSE,delete=T)	
+#' 	
+#' Having a look to the parameter estimates, it sounds like the slope of the age effect on survival is estimated positive...	
+#' 	
+cov.est$results$beta[1:2,1] # intercept and slope of the age effect	
+expit(cov.est$results$beta[3,1]) # detection prob, after back-transformation	
+#' 	
+#' 	
+#' Which means that at the population level, whenever individual heterogeneity is ignored, then senescence (in red) is completely masked. Even worse, survival is increasing with increasing age (in blue).	
+#' 	
+plot(age[1,],phi[1,],type='l',col='grey',ylim=c(0,1),xlab='age',ylab='estimated survival')	
+for (i in 2:nind){	
+  lines(age[i,],phi[i,],type='l',col='grey')	
+}	
+lines(1:nyear,expit(intercept_phi + slope_phi * 1:nyear),col='red',lwd=2)	
+lines(1:nyear,expit(cov.est$results$beta[1,1] + cov.est$results$beta[2,1] * 1:nyear),col='blue',lwd=2)	
+#' 	
+#' 	
+#' Now we fit the model with a random effect in the survival process. The model structure is specified with the `model="CJSRandom"` option:	
+#' 	
+cap.processed=process.data(cap,model="CJSRandom")	
+cap.ddl=make.design.data(cap.processed)	
+#' 	
+#' 	
+#' Then we specify the effects on survival and detection probabilities. By default, because we use the random structure in MARK, there is a random effect on both parameters, ie these probabilities are drawn from a normal distribution with a mean and a standard deviation. We fix the standard deviation of the random effect on detection to 0 to fit a model with a constant detection probability. In contrast, we let MARK estimate both parameters of the random effect for the survival probability.	
+#' 	
+# mean survival	
+phiage = list(formula=~cov) # covariate-dependent (age here)	
+# standard deviation of the random effect on survival is to be estimated	
+sigmaphi = list(formula=~1)	
+# mean recapture probability	
+pct = list(formula=~1)	
+# standard deviation of the random effect on recapture is fixed to 0	
+# in other words, no random effect on detection	
+sigmap.fixed=list(formula=~1,fixed=0)	
+#' 	
+#' 	
+#' Let's roll and fit this model:	
+#' 	
+model.re = mark(cap.processed,cap.ddl,model.parameters=list(Phi=phiage,p=pct,sigmap=sigmap.fixed,sigmaphi=sigmaphi),output = FALSE,delete=T)	
+#' 	
+#' Let's have a look to the parameter estimates:	
+#' 	
+model.re$results$beta	
+#' 	
+#' 	
+#' The sandard deviation of the random effect is estimated on the log scale (I assume since we obtain a confidence interval with a negative lower bound; ask Gary and/or Jeff), hence after back-transformation, the estimate is `r exp(model.re$results$beta[1,1])`. Detection probability is estimated on the logit scale, therefore, after back-transformation, we get an estimate of `r expit(model.re$results$beta[4,1])`. The intercept and slope of the age-survival relationship are quite close to the values we used to simulate the data.	
+#' 	
+#' Now we add to our previous plot the survival as estimated when individual heterogeneity is explicitely accounted for using individual random effects (in green):	
+#' 	
+plot(age[1,],phi[1,],type='l',col='grey',ylim=c(0,1),xlab='age',ylab='estimated survival')	
+for (i in 2:nind){	
+  lines(age[i,],phi[i,],type='l',col='grey')	
+}	
+lines(1:nyear,expit(intercept_phi + slope_phi * 1:nyear),col='red',lwd=2)	
+lines(1:nyear,expit(cov.est$results$beta[1,1] + cov.est$results$beta[2,1] * 1:nyear),col='blue',lwd=2)	
+lines(1:nyear,expit(model.re$results$beta[2,1] + model.re$results$beta[3,1] * 1:nyear),col='green',lwd=2)	
+#' 	
+#' 	
+#' 	
+# produce figure for paper	
+ppi <- 300	
+png("fig_random.png", width=6*ppi, height=6*ppi, res=ppi)	
+plot(age[1,],phi[1,],type='l',col='grey',ylim=c(0,1),xlab='age',ylab='estimated survival')	
+for (i in 2:nind){	
+  lines(age[i,],phi[i,],type='l',col='grey')	
+}	
+lines(1:nyear,expit(intercept_phi + slope_phi * 1:nyear),col='red',lwd=2)	
+lines(1:nyear,expit(cov.est$results$beta[1,1] + cov.est$results$beta[2,1] * 1:nyear),col='blue',lwd=2)	
+lines(1:nyear,expit(model.re$results$beta[2,1] + model.re$results$beta[3,1] * 1:nyear),col='green',lwd=2)	
+dev.off()	
+#' 	
+#' 	
+#' 	
+#' To test whether the random effect is significant, in other words to test the null hypothesis that the standard deviation of the random effect is null, we need to carry out a likelihood ratio test (LRT). The asymptotic behavior of the LRT statistic is a bit unusual in that particular situation (see [Gimenez and Choquet 2010](https://dl.dropboxusercontent.com/u/23160641/my-pubs/Gimenez%26Choquet2010Ecology.pdf) for example). 	
+#' 	
+#' We first need the deviance of the two models with and without the random effect. To get the deviance of the model without random effect, we could use the results from the first section above, or run a model with the random structure by fixing the standard deviation of the random effect on survival probability to 0. For the sake of complexity (...), let's use the latter option:	
+#' 	
+phict = list(formula=~cov) # constant	
+sigmaphi = list(formula=~1,fixed=0)	
+pct = list(formula=~1)	
+sigmap = list(formula=~1,fixed=0)	
+model.without.re = mark(cap.processed,cap.ddl,model.parameters=list(Phi=phict,p=pct,sigmap=sigmap,sigmaphi=sigmaphi),output = FALSE,delete=T)	
+#' 	
+#' 	
+#' Then we can form the LRT statistic:	
+#' 	
+dev_model_with_RE = model.re$results$deviance	
+dev_model_without_RE = model.without.re$results$deviance	
+LRT = dev_model_without_RE - dev_model_with_RE	
+#' 	
+#' 	
+#' And calculate the p-value of the test:	
+#' 	
+1-pchisq(LRT,1)	
+#' 	
+#' 	
+#' The test is significant, we reject the null hypothesis that the standard deviation is 0, therefore there seems to be heterogeneity in survival as captured by the individual random effect. 	
+#' 	
+#' Last but not least, you might want to check that the age effect is there. To test that, we go for a model with a random effect but without the age effect:	
+#' 	
+phict = list(formula=~1)	
+sigmaphi = list(formula=~1)	
+pct = list(formula=~1)	
+sigmap.fixed=list(formula=~1,fixed=0)	
+model.noagere = mark(cap.processed,cap.ddl,model.parameters=list(Phi=phict,p=pct,sigmap=sigmap.fixed,sigmaphi=sigmaphi),output = FALSE,delete=T)	
+#' 	
+#' 	
+#' Then compare AICc:	
+#' 	
+model.re$results$AICc # age effect, with random effect	
+model.noagere$results$AICc # no age effect, with random effect	
+#' 	
+#' 	
+#' ## Models with finite mixtures	
+#' 	
+#' Here, we again aim at illustrating how not accounting for individual heterogeneity may obscure the detection of senescence in survival. In contrast with the previous section, we now use finite mixtures to deal with heterogeneity. More specifically, we consider a cohort of 1000 individuals that are split into a group of robust individuals in proportion $\pi$ with constant high survival $\phi_R$ and a group of frail individuals with survival $\phi_F$ that senesce over the 20 years of the study according to the relationship $logit(\phi_F(a))=\beta_0+\beta_1 a$. We use $\pi = 0.3$, $\phi_R = 0.85$, $\beta_0 = 0$ and $\beta_1 = -0.07$. Note that we consider the same detection probability $p=0.5$ for all individuals.	
+#' 	
+#' ### Data simulation	
+#' 	
+#' First simulate data	
+#' 	
+r = set.seed(3) # for reproducibility	
+p = 0.5 # detection	
+prop_class1 = 0.3 # pi	
+phi_class1 = 0.85 # survival or robust ind	
+intercept_phi_class2 = 0 #beta_0	
+slope_phi_class2 = -0.05 # beta_1	
+nind = 1000 # nb of ind	
+nyear = 20 # duration of the study	
+expit<-function(x){exp(x)/(1+exp(x))} # reciprocal of the logit function	
+z<-data<-x<-matrix(NA,nrow=nind,ncol=nyear)	
+first<-rep(1,nind)	
+age = matrix(NA,nind,nyear)	
+phi = matrix(NA,nind,nyear)	
+which_mixture = rep(NA,nind)	
+# simulate age-varying survival for each individual, 	
+# by first assigning them to the robust or frail class, then using the corresponding 	
+# survival 	
+for (i in 1:nind){	
+  mask <- first[i]:nyear	
+  age[i,mask] <- mask - first[i] + 1	
+  which_mixture[i] <- rbinom(1,1,prop_class1) # assign ind i to a class with prob pi	
+  if (which_mixture[i] == 1){	
+    phi[i,mask] <- phi_class1 # robust	
+  } else { 	
+  phi[i,mask] <- expit(intercept_phi_class2 + slope_phi_class2 * age[i,mask])} # frail	
+}	
+#' 	
+#' 	
+#' Represent graphically survival over time in the two classes:	
+#' 	
+plot(age[1,],phi[1,],type='l',col='grey',ylim=c(0,1),xlab='age',ylab='estimated survival')	
+for (i in 2:nind){	
+  lines(age[i,],phi[i,],type='l',col='grey')	
+}	
+#' 	
+#' 	
+#' Now simulate the encounter histories:	
+#' 	
+for(i in 1:nind){	
+  z[i,first[i]] <- x[i,first[i]] <- 1	
+  for(j in (first[i]+1):nyear){	
+    z[i,j]<-rbinom(1,1,phi[i,j-1]*z[i,j-1])	
+    x[i,j]<-rbinom(1,1,z[i,j]*p)	
+  }	
+}	
+his = x	
+his[is.na(his)]=0	
+#' 	
+#' 	
+#' ### Model fitting	
+#' 	
+#' First, we format the data we've just simulated so that these can be used with RMark:	
+#' 	
+k = ncol(his)	
+n = nrow(his)	
+out = array(dim=n)	
+for (i in 1:n){	
+	y = (his[i,] > 0) * 1	
+	out[i] = paste(y,collapse="")	
+}	
+capt.hist = data.frame(ch = out)	
+#' 	
+#' 	
+#' Now, we add age as a time-varying individual covariate to the dataset (check out [these notes](https://sites.google.com/site/workshoponcmr/) by Mike Conroy for more details):	
+#' 	
+df = data.frame(time=c(1:(nyear-1)),cov=runif(nyear-1))	
+simul.data = list(cap.data=capt.hist,cov=df)	
+n.ind <- nrow(simul.data$cap.data)	
+for (i in 1:nyear){	
+  name = paste('cov',i,sep='')	
+  assign(name,age[,i])	
+}	
+cap<-simul.data$cap.data	
+# pretty ugly lines of codes to follow, happy to hear for suggestions to make this dynamic	
+cap$cov1=cov1	
+cap$cov2=cov2	
+cap$cov3=cov3	
+cap$cov4=cov4	
+cap$cov5=cov5	
+cap$cov6=cov6	
+cap$cov7=cov7	
+cap$cov8=cov8	
+cap$cov9=cov9	
+cap$cov10=cov10	
+cap$cov11=cov11	
+cap$cov12=cov12	
+cap$cov13=cov13	
+cap$cov14=cov14	
+cap$cov15=cov15	
+cap$cov16=cov16	
+cap$cov17=cov17	
+cap$cov18=cov18	
+cap$cov19=cov19	
+#head(cap,100)	
+#' 	
+#' 	
+#' Now let's fit two models assuming homogeneity, first one with constant survival probability, second one with an age effect: 	
+#' 	
+library(RMark)	
+phi.ct = list(formula=~1) # constant survival	
+phi.age = list(formula=~cov) # age-dependent survival	
+p.ct = list(formula=~1) # constant recapture	
+dat.proc = process.data(cap, model="CJS")	
+dat.ddl = make.design.data(dat.proc)	
+model.hom.phi = mark(dat.proc,dat.ddl,model.parameters=list(Phi=phi.ct,p=p.ct),output = FALSE,delete=T)	
+model.hom.phi.age = mark(dat.proc,dat.ddl,model.parameters=list(Phi=phi.age,p=p.ct),output = FALSE,delete=T)	
+#' 	
+#' 	
+#' Graphically, we have the estimate from the model with constant survival (in red) vs. age-varying survival (in blue):	
+#' 	
+plot(age[1,],phi[1,],type='l',col='grey',ylim=c(0,1),xlab='age',ylab='estimated survival')	
+for (i in 2:nind){	
+  lines(age[i,],phi[i,],type='l',col='grey')	
+}	
+lines(1:nyear,rep(model.hom.phi$results$real[1,1],nyear),lwd=2,col='red') # add survival from constant model	
+lines(1:nyear,expit(model.hom.phi.age$results$beta[1,1]+model.hom.phi.age$results$beta[2,1]*(1:nyear)),lwd=2,col='blue') # add survival from age model	
+#' 	
+#' 	
+#' Again, as in the previous section, it's striking to see that survival is increasing when age increases if individual heterogeneity is ignored. In other words, senescence is masked. 	
+#' 	
+#' Now let's fit a model with heterogeneity in the survival probability, with constant parameters over time. We define the model structure, by using the `model="CJSMixture"` option:	
+#' 	
+# load RMark package	
+library(RMark)	
+dat.proc2 = process.data(cap, model="CJSMixture")	
+dat.ddl2 = make.design.data(dat.proc2)	
+#' 	
+#' 	
+#' We also define the effect on the parameters. Constant survival, two-finite mixture on the survival probability and a constant proportion of individual in each class:	
+#' 	
+# survival	
+phi.mix = list(formula=~mixture) # mixture	
+# mixture proportion	
+pi.dot=list(formula=~1) # constant	
+#' 	
+#' 	
+#' Let's fit that model:	
+#' 	
+model.het = mark(dat.proc2,dat.ddl2,model.parameters=list(Phi=phi.mix,p=p.ct,pi=pi.dot),output = FALSE,delete=T)	
+#' 	
+#' 	
+#' Let's have a look to the parameter estimates of the model with heterogeneity:	
+#' 	
+model.het$results$real	
+#' 	
+#' 	
+#' The proportion of individuals in mixture 1 is:	
+#' 	
+prop = model.het$results$real[1,1]	
+prop	
+#' 	
+#' 	
+#' with survival probability:	
+#' 	
+phi1 = model.het$results$real[2,1]	
+phi1	
+#' 	
+#' 	
+#' For the other mixture, the proportion is the complementary and the survival probability is:	
+#' 	
+phi2 = model.het$results$real[3,1]	
+phi2	
+#' 	
+#' 	
+#' Lastly, recapture probability is:	
+#' 	
+p = model.het$results$real[4,1]	
+p	
+#' 	
+#' 	
+#' Let's have a look graphically:	
+#' 	
+plot(age[1,],phi[1,],type='l',col='grey',ylim=c(0,1),xlab='age',ylab='estimated survival')	
+for (i in 2:nind){	
+  lines(age[i,],phi[i,],type='l',col='grey')	
+}	
+lines(1:nyear,rep(phi1,nyear),lwd=2,col='green') # add survival from first class	
+lines(1:nyear,rep(phi2,nyear),lwd=2,col='green') # add survival from second class	
+#' 	
+#' 	
+#' Not too bad. Obviously, for frail individuals, we miss the age effect to be able to detect senescence. Now let's add age to this model:	
+#' 	
+# age-dependent heterogenous survival	
+phi.mix.age = list(formula=~mixture*cov)	
+#' 	
+#' 	
+#' Let's fit that model:	
+#' 	
+model.het.age = mark(dat.proc2,dat.ddl2,model.parameters=list(Phi=phi.mix.age,p=p.ct,pi=pi.dot),output = FALSE,delete=T)	
+#' 	
+#' 	
+#' Let's have a look to the parameter estimates of the model with heterogeneity:	
+#' 	
+model.het.age$results$real[,1:4]	
+#' 	
+#' 	
+#' Let's have a look graphically:	
+#' 	
+plot(age[1,],phi[1,],type='l',col='grey',ylim=c(0,1),xlab='age',ylab='estimated survival')	
+for (i in 2:nind){	
+  lines(age[i,],phi[i,],type='l',col='grey')	
+}	
+phi1 = model.het.age$results$real[2:20,1]	
+phi2 = model.het.age$results$real[21:39,1]	
+lines(1:(nyear-1),phi1,lwd=2,col='green') # add survival from first class	
+lines(1:(nyear-1),phi2,lwd=2,col='green') # add survival from second class	
+lines(1:nyear,expit(model.hom.phi.age$results$beta[1,1]+model.hom.phi.age$results$beta[2,1]*(1:nyear)),lwd=2,col='blue') # add survival from age model	
+#' 	
+#' 	
+#' 	
+# produce figure for paper	
+ppi <- 300	
+png("fig_mixture.png", width=6*ppi, height=6*ppi, res=ppi)	
+plot(age[1,],phi[1,],type='l',col='grey',ylim=c(0,1),xlab='age',ylab='estimated survival')	
+for (i in 2:nind){	
+  lines(age[i,],phi[i,],type='l',col='grey')	
+}	
+phi1 = model.het.age$results$real[2:20,1]	
+phi2 = model.het.age$results$real[21:39,1]	
+lines(1:(nyear-1),phi1,lwd=2,col='green') # add survival from first class	
+lines(1:(nyear-1),phi2,lwd=2,col='green') # add survival from second class	
+lines(1:nyear,expit(model.hom.phi.age$results$beta[1,1]+model.hom.phi.age$results$beta[2,1]*(1:nyear)),lwd=2,col='blue') # add survival from age model	
+dev.off()	
+#' 	
+#' 	
+#' Now how to decide whether heterogeneity is important? The cool thing is that it's fine to use the AIC to compare models with/without heterogeneity [(Cubaynes et al. 2012)](https://dl.dropboxusercontent.com/u/23160641/my-pubs/Cubaynesetal2011MEE.pdf). So let's compare the AIC values:	
+#' 	
+summary(model.het.age)$AICc # heterogeneity and age	
+summary(model.hom.phi.age)$AICc # age	
+summary(model.het)$AICc # heterogeneity	
+summary(model.hom.phi)$AICc # null	
+#' 	
+#' 	
+#' Sounds like there is some heterogeneity and an age effect. 	
