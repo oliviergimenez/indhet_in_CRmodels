@@ -3,7 +3,7 @@ Capture-recapture models with individual heterogeneity
 
 We provide here the code to illustrate CR models with individual heterogeneity, namely CR multistate, random-effect and 
 finite-mixture models. This is an appendix for a paper in preparation for a special issue that will be published in Oikos.
-The paper is entitled: '' and is co-authored with Emmanuelle Cam and Jean-Michel Gaillard.
+The paper is entitled: 'Individual heterogeneity and capture-recapture models: what, why and how? ' and is co-authored with Emmanuelle Cam and Jean-Michel Gaillard.
 
 This repository contains the following files:
 
