@@ -18,3 +18,8 @@ B. a Bayesian approach using MCMC methods implemented in JAGS called from R usin
   + appendix_paper_IHCMR_partB.docx: the word output file
   + appendix_paper_IHCMR_partB.pdf: the pdf output file
   + appendix_paper_IHCMR[rmd2r]_partB.R: the R script generated from the markdown file using the function `rmd2rscript` which can be found [here](http://rstudio-pubs-static.s3.amazonaws.com/12734_0a38887f19a34d92b7311a2c9cb15022.html).
+
+A. a Frequentist approach using maximum likelihood methods implemented in E-SURGE:
+  + appendix_paper_IHCMR_partA.docx: the word output file
+  + appendix_paper_IHCMR_partA.pdf: the pdf output file
+  + datasets....
