@@ -14,7 +14,7 @@ A. a Frequentist approach using maximum likelihood methods implemented in MARK c
   + appendix_paper_IHCMR[rmd2r]_partA.R: the R script generated from the markdown file using the function `rmd2rscript` which can be found [here](http://rstudio-pubs-static.s3.amazonaws.com/12734_0a38887f19a34d92b7311a2c9cb15022.html).
 
 B. a Bayesian approach using MCMC methods implemented in JAGS called from R using package R2jags:
-  + appendix_paper_IHCMR_partA.Rmd: the markdown file that generates the docx and pdf output files
-  + appendix_paper_IHCMR_partA.docx: the word output file
-  + appendix_paper_IHCMR_partA.pdf: the pdf output file
-  + appendix_paper_IHCMR[rmd2r]_partA.R: the R script generated from the markdown file using the function `rmd2rscript` which can be found [here](http://rstudio-pubs-static.s3.amazonaws.com/12734_0a38887f19a34d92b7311a2c9cb15022.html).
+  + appendix_paper_IHCMR_partB.Rmd: the markdown file that generates the docx and pdf output files
+  + appendix_paper_IHCMR_partB.docx: the word output file
+  + appendix_paper_IHCMR_partB.pdf: the pdf output file
+  + appendix_paper_IHCMR[rmd2r]_partB.R: the R script generated from the markdown file using the function `rmd2rscript` which can be found [here](http://rstudio-pubs-static.s3.amazonaws.com/12734_0a38887f19a34d92b7311a2c9cb15022.html).
